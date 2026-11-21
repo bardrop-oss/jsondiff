@@ -36,7 +36,14 @@ func (h *hasher) hash(i interface{}, sort bool) {
 		_ = h.mh.WriteByte('0')
 	case []interface{}:
 		if sort {
-			h.sortArray(v)
+			// Hash the element digests in sorted order,
+			// so that the digest does not depend on the
+			// order of the elements. The array itself is
+			// left untouched: it belongs to the document
+			// being compared, which the differ walks by
+			// index afterwards.
+			h.hashUnordered(v)
+			return
 		}
 		for _, e := range v {
 			h.hash(e, sort)
@@ -58,22 +65,19 @@ func (h *hasher) hash(i interface{}, sort bool) {
 	}
 }
 
-func (h *hasher) sortArray(a []interface{}) {
-	h1 := hasher{}
-	h2 := hasher{}
+func (h *hasher) hashUnordered(a []interface{}) {
+	eh := hasher{}
+	eh.mh.SetSeed(h.mh.Seed())
 
-	h1.mh.SetSeed(h.mh.Seed())
-	h2.mh.SetSeed(h.mh.Seed())
+	digests := make([]uint64, len(a))
+	for i, e := range a {
+		digests[i] = eh.digest(e, true)
+	}
+	slices.Sort(digests)
 
-	slices.SortStableFunc(a, func(a1, a2 interface{}) int {
-		d1 := h1.digest(a1, true)
-		d2 := h2.digest(a2, true)
-
-		if d1 > d2 {
-			return 1
-		} else if d1 < d2 {
-			return -1
-		}
-		return 0
-	})
+	var buf [8]byte
+	for _, d := range digests {
+		binary.BigEndian.PutUint64(buf[:], d)
+		_, _ = h.mh.Write(buf[:])
+	}
 }
